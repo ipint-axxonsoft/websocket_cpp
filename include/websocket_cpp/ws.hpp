@@ -8,14 +8,14 @@ namespace ws
 	{
 		const uint8_t* data_;
 		size_t data_len_ = 0;
-		unsigned key_;
+		uint32_t key_;
 	public:
-		DataMaskingHelper(const uint8_t* data, size_t len, unsigned key)
+		DataMaskingHelper(const uint8_t* data, size_t len, uint32_t key)
 			: data_(data), data_len_(len), key_(key)
 		{
 		}
 
-		size_t Mask(char* out) {
+		size_t Mask(uint8_t* out) {
 			auto* ptr = data_;
 			for (size_t i = 0; i < data_len_; ++i)
 			{
@@ -23,6 +23,19 @@ namespace ws
 			}
 
 			return data_len_;
+		}
+	};
+
+	class DataDemaskingHelper : private DataMaskingHelper
+	{
+	public:
+		DataDemaskingHelper(const uint8_t* data, size_t len, uint32_t key)
+			: DataMaskingHelper(data, len, key)
+		{
+		}
+
+		size_t Demask(uint8_t* out) {
+			return Mask(out);
 		}
 	};
 
@@ -72,12 +85,18 @@ namespace ws
 			wrapBuffer[1] |= 1U << 7; // set MASK flag
 
 			wrapBuffer[1] |= datalen; // set PAYLOAD LEN
+			resultWrapDataLen = 2;
 
 			uint32_t* maskingKey = (uint32_t*)(wrapBuffer + 2);
-			uint32_t someRandomMaskingKey = 0x19; // random 32-bit MASKING KEY, need to be generated randomly
+			uint32_t someRandomMaskingKey = 0xff; // random 32-bit MASKING KEY, need to be generated randomly
 			*maskingKey = someRandomMaskingKey;
 
-			resultWrapDataLen = 6;
+			resultWrapDataLen += 4;
+
+			// MASKING data
+			unsigned key = 0xff; // TODO, a key should be randomly generated
+			DataMaskingHelper((const uint8_t*)data, datalen, someRandomMaskingKey).Mask((uint8_t*)(wrapBuffer + resultWrapDataLen));
+			resultWrapDataLen += datalen;
 
 			wrapCb_(wrapBuffer, resultWrapDataLen);
 		}

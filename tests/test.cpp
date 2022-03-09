@@ -11,9 +11,15 @@ BOOST_AUTO_TEST_CASE(DataMaskingHelper_test0)
     const char data[DATA_LEN] = "Test";
     char outBuffer[DATA_LEN];
     int key = 33;
-    auto resLen = ws::DataMaskingHelper((uint8_t*)data, 5, key).Mask(outBuffer);
+    auto resLen = ws::DataMaskingHelper((uint8_t*)data, DATA_LEN, key).Mask((uint8_t*)outBuffer);
 
-    BOOST_CHECK(resLen == DATA_LEN); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(resLen == DATA_LEN); // masking should not affect the original size
+    BOOST_CHECK(strcmp(data, outBuffer) != 0); // check input and output are not the same
+
+    char demaskedBuffer[DATA_LEN];
+    auto demaskResLen = ws::DataDemaskingHelper((uint8_t*)outBuffer, DATA_LEN, key).Demask((uint8_t*)demaskedBuffer);
+    BOOST_CHECK(demaskResLen == DATA_LEN); // de-masking should not affect the original size
+    BOOST_CHECK(strcmp(data, demaskedBuffer) == 0); // after reversed mask operation the result buffer should be match the orig. input
 }
 
 BOOST_AUTO_TEST_CASE(Client_test0)
@@ -31,7 +37,7 @@ BOOST_AUTO_TEST_CASE(Client_test0)
         memcpy(wrapDataBuffer, wrappedData, len);
 		wrapDataLen = len;
     };
-
+    
     auto c = new ws::Client(dataReadyCb, wrapCb);
 
     char plainText[] = "Hello, World!";
@@ -45,9 +51,7 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     
     BOOST_CHECK(std::bitset<7>(wrapDataBuffer[1]) == plainTextLen); // check payload len
     
-    BOOST_CHECK(wrapDataLen == 6);
-
-    BOOST_CHECK(*((uint32_t*)wrapDataBuffer + 2) == 0x19); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 2) != 0); // just check some MASKING KEY is set, should be 32 bit value
 
     delete c;
 }

@@ -38,11 +38,11 @@ BOOST_AUTO_TEST_CASE(Client_test0)
 		wrapDataLen = len;
     };
     
-    auto c = new ws::Client(dataReadyCb, wrapCb);
+    ws::Client c(dataReadyCb, wrapCb);
 
-    char plainText[] = "Hello, World!";
+    char plainText[] = "Hello, World!"; // it's a short text, for the payload length should be sufficient 7bit scheme
     size_t plainTextLen = strlen(plainText);
-    c->WrapData(plainText, plainTextLen);
+    c.WrapData(plainText, plainTextLen);
     BOOST_CHECK(std::bitset<8>(wrapDataBuffer[0]).test(7) == 1); // check FIN bit is 1
     
     BOOST_CHECK(std::bitset<4>(wrapDataBuffer[0]) == 0x2); // check OP code, we use only binary
@@ -52,6 +52,39 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     BOOST_CHECK(std::bitset<7>(wrapDataBuffer[1]) == plainTextLen); // check payload len
     
     BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 2) != 0); // just check some MASKING KEY is set, should be 32 bit value
+}
 
-    delete c;
+BOOST_AUTO_TEST_CASE(Client_test1)
+{
+    const size_t DATA_BUFFER_LEN = 2048;
+    char wrapDataBuffer[DATA_BUFFER_LEN];
+    char plainDataBuffer[DATA_BUFFER_LEN];
+
+    memset(wrapDataBuffer, 0, DATA_BUFFER_LEN);
+    memset(plainDataBuffer, 0, DATA_BUFFER_LEN);
+    size_t wrapDataLen = 0;
+
+    auto dataReadyCb = [plainDataBuffer](const char* data, size_t len) {};
+    auto wrapCb = [&wrapDataBuffer, &wrapDataLen](const char* wrappedData, size_t len) {
+        memcpy(wrapDataBuffer, wrappedData, len);
+        wrapDataLen = len;
+    };
+
+   ws::Client c(dataReadyCb, wrapCb);
+
+    const size_t DATA_LEN = 50000;
+    char plainText[DATA_LEN]; // some large data to check 7+16 bits payload scheme
+    memset(plainText, 97, DATA_LEN);
+    c.WrapData(plainText, DATA_LEN);
+    BOOST_CHECK(std::bitset<8>(wrapDataBuffer[0]).test(7) == 1); // check FIN bit is 1
+
+    BOOST_CHECK(std::bitset<4>(wrapDataBuffer[0]) == 0x2); // check OP code, we use only binary
+
+    BOOST_CHECK(std::bitset<8>(wrapDataBuffer[1]).test(7) == 1); // check MASK code, for client it's always true
+
+    // check 7 + 16 payload length scheme
+    BOOST_CHECK(std::bitset<7>(wrapDataBuffer[1]) == 126);
+    BOOST_CHECK(*(uint16_t*)(wrapDataBuffer + 2) == DATA_LEN);
+
+    BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 4) != 0); // just check some MASKING KEY is set, should be 32 bit value
 }

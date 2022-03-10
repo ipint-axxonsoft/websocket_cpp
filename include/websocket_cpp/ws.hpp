@@ -61,7 +61,7 @@ namespace ws
 
 	class Client : public IWebSocket
 	{
-		enum { BUFFER_SIZE = 2048 };
+		enum { BUFFER_SIZE = 65536 };
 		char wrapBuffer[BUFFER_SIZE];
 	public:
 
@@ -78,16 +78,32 @@ namespace ws
 		virtual void WrapData(const char* data, size_t datalen) override
 		{
 			size_t resultWrapDataLen = 0;
+
 			wrapBuffer[0] |= 1U << 7; // set FIN bit
 			
 			wrapBuffer[0] |= 0x2; // set OP CODE. 0x2 is binary format
 			
 			wrapBuffer[1] |= 1U << 7; // set MASK flag
 
-			wrapBuffer[1] |= datalen; // set PAYLOAD LEN
-			resultWrapDataLen = 2;
+			resultWrapDataLen += 1;
 
-			uint32_t* maskingKey = (uint32_t*)(wrapBuffer + 2);
+			if (datalen < 126) // max payload len for 2 ^ 7 - 2
+			{
+				wrapBuffer[1] |= datalen; // set PAYLOAD LEN
+				resultWrapDataLen += 2;
+			}
+			else if (datalen < 65536) // max payload len for 2 ^ 16
+			{
+				wrapBuffer[1] |= 126;
+				*(uint16_t*)(wrapBuffer + 2) |= datalen; // next 2 bytes reserved for the payload size 
+				resultWrapDataLen += 3;
+			}
+			else
+			{
+				throw std::runtime_error("Not implemented yet 7+16+64 payload length scheme");
+			}
+
+			uint32_t* maskingKey = (uint32_t*)(wrapBuffer + resultWrapDataLen);
 			uint32_t someRandomMaskingKey = 0xff; // random 32-bit MASKING KEY, need to be generated randomly
 			*maskingKey = someRandomMaskingKey;
 

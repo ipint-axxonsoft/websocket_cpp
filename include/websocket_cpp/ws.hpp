@@ -120,16 +120,60 @@ namespace ws
 
 	class Server : public IWebSocket
 	{
+		enum { BUFFER_SIZE = 65536 };
+		char dataBuffer_[BUFFER_SIZE];
+		size_t bufferLen = 0;
+
+		uint64_t inPayloadLen = 0;
+
 	public:
 		Server(DataReadyCallback_t cb, DataWrapCallback_t wrapCb) : IWebSocket(cb, wrapCb) {}
 
 		// Inherited via IWebSocket
 		virtual void SubmitChunk(const char* data, size_t dataLen) override
 		{
+			if (std::bitset<8>(data[0]).test(7) == false)
+				throw std::runtime_error("FIN != 0 not supported yet!");
+			
+			if (std::bitset<4>(data[0]) != 2)
+				throw std::runtime_error("Opcodes except 2 is not supported yet!");
+
+			if (std::bitset<8>(data[1]).test(7) != 1)
+				throw std::runtime_error("Client frame always should be masked!");
+
+			size_t headerPointer = 0;
+
+			inPayloadLen = std::bitset<7>(*(data + 1)).to_ulong();
+			if (inPayloadLen < 126)
+			{
+				headerPointer = 2;
+			}
+			else if (inPayloadLen == 126)
+			{
+				inPayloadLen = *(uint16_t*)(data + 2);
+				headerPointer = 4;
+			}
+			else
+			{
+				throw std::runtime_error("Payload scheme 7 + 16 + 64 is not supported yet!");
+			}
+
+			uint32_t maskingKey = 0;
+			maskingKey = *(uint32_t*)(data + headerPointer);
+			headerPointer += 4;
+
+			bufferLen = DataDemaskingHelper((const uint8_t*)(data + headerPointer), inPayloadLen, maskingKey).Demask((uint8_t*)dataBuffer_);
+
+			cb_(dataBuffer_, bufferLen);
 		}
 
 		virtual void WrapData(const char* data, size_t datalen) override
 		{
+		}
+
+		uint64_t recPayloadLen() const
+		{
+			return inPayloadLen;
 		}
 	};
 }

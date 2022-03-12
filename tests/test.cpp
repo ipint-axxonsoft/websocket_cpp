@@ -7,19 +7,36 @@
 
 BOOST_AUTO_TEST_CASE(DataMaskingHelper_test0)
 {
-    const size_t DATA_LEN = 5;
+    const size_t DATA_LEN = 5; // 4 chars + trailing zero
     const char data[DATA_LEN] = "Test";
     char outBuffer[DATA_LEN];
-    int key = 33;
+    int key = 0xaabbccdd;
     auto resLen = ws::DataMaskingHelper((uint8_t*)data, DATA_LEN, key).Mask((uint8_t*)outBuffer);
 
+    const char maskedData[] = { 0x89, 0xa9, 0xc8, 0xde, 0xDD }; // manually masked data for test :)
+
     BOOST_CHECK(resLen == DATA_LEN); // masking should not affect the original size
-    BOOST_CHECK(strcmp(data, outBuffer) != 0); // check input and output are not the same
+
+    BOOST_CHECK(memcmp(outBuffer, maskedData, DATA_LEN) == 0);
 
     char demaskedBuffer[DATA_LEN];
     auto demaskResLen = ws::DataDemaskingHelper((uint8_t*)outBuffer, DATA_LEN, key).Demask((uint8_t*)demaskedBuffer);
     BOOST_CHECK(demaskResLen == DATA_LEN); // de-masking should not affect the original size
     BOOST_CHECK(strcmp(data, demaskedBuffer) == 0); // after reversed mask operation the result buffer should be match the orig. input
+}
+
+BOOST_AUTO_TEST_CASE(DataMaskingHelper_test1)
+{
+    const size_t DATA_LEN = 5; // 4 chars + trailing zero
+    const char data[DATA_LEN] = "Test";
+    char outBuffer[DATA_LEN];
+    int key = 0xff;
+    auto resLen = ws::DataMaskingHelper((uint8_t*)data, DATA_LEN, key).Mask((uint8_t*)outBuffer);
+    char demaskedBuffer[DATA_LEN];
+    auto demaskResLen = ws::DataDemaskingHelper((uint8_t*)outBuffer, DATA_LEN, key).Demask((uint8_t*)demaskedBuffer);
+
+    BOOST_CHECK(demaskResLen == DATA_LEN);
+    BOOST_CHECK(strcmp(data, demaskedBuffer) == 0);
 }
 
 BOOST_AUTO_TEST_CASE(Client_test0)
@@ -41,8 +58,11 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     ws::Client c(dataReadyCb, wrapCb);
 
     char plainText[] = "Hello, World!"; // it's a short text, for the payload length should be sufficient 7bit scheme
-    const size_t PLAIN_TEXT_LEN = strlen(plainText);
+    const size_t PLAIN_TEXT_LEN = strlen(plainText) + 1; // +1 for trailing 0
     c.WrapData(plainText, PLAIN_TEXT_LEN);
+
+    BOOST_CHECK(wrapDataLen == 20);
+
     BOOST_CHECK(std::bitset<8>(wrapDataBuffer[0]).test(7) == 1); // check FIN bit is 1
     
     BOOST_CHECK(std::bitset<4>(wrapDataBuffer[0]) == 0x2); // check OP code, we use only binary
@@ -51,7 +71,7 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     
     BOOST_CHECK(std::bitset<7>(wrapDataBuffer[1]) == PLAIN_TEXT_LEN); // check payload len
     
-    BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 2) != 0); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(*((uint32_t*)(wrapDataBuffer + 2)) == c.usedMaskingKey()); // just check some MASKING KEY is set, should be 32 bit value
 }
 
 BOOST_AUTO_TEST_CASE(Client_test1)
@@ -91,7 +111,7 @@ BOOST_AUTO_TEST_CASE(Client_test1)
 
 BOOST_AUTO_TEST_CASE(Server_test0)
 {
-    const char wrappedData[] = { (char)0x82, (char)0x8e, (char)0x00, (char)0xff, (char)0x00, (char)0x00, (char)0x00, (char)0xb7, (char)0x65, (char)0x6c, (char)0x6c, (char)0x90, (char)0x2c, (char)0x20, (char)0x57, (char)0x90, (char)0x72, (char)0x6c, (char)0x64, (char)0xde };
+    const char wrappedData[] = { 0x82, 0x8e, 0xff, 0x00, 0x00, 0x00, 0xb7, 0x65, 0x6c, 0x6c, 0x90, 0x2c, 0x20, 0x57, 0x90, 0x72, 0x6c, 0x64, 0xde, 0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
 
     char plainDataBuffer[255];
@@ -99,15 +119,16 @@ BOOST_AUTO_TEST_CASE(Server_test0)
     size_t plainDataLen = 0;
 
     auto dataReadyCb = [&plainDataBuffer, &plainDataLen](const char* data, size_t len) { memcpy(plainDataBuffer, data, len), plainDataLen = len; };
-    auto wrapCb = [](const char* wrappedData, size_t len) {};
+    auto wrapCb = [](const char* data, size_t len) {};
 
     ws::Server s(dataReadyCb, wrapCb);
 
     s.SubmitChunk(wrappedData, WRAPPED_DATA_LEN);
     
-    BOOST_CHECK(s.recPayloadLen() == 14); // Hello, World! + trailing zero = 14
+    BOOST_CHECK(s.recMaskingKey() == 0xff);
 
+    BOOST_CHECK(s.recPayloadLen() == 14); // Hello, World! + trailing zero = 14
     BOOST_CHECK(plainDataLen == 14); // just check some MASKING KEY is set, should be 32 bit value
-    auto slen = strlen(plainDataBuffer);
+
     BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0); // just check some MASKING KEY is set, should be 32 bit value
 }

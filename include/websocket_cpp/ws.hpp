@@ -19,7 +19,9 @@ namespace ws
 			auto* ptr = data_;
 			for (size_t i = 0; i < data_len_; ++i)
 			{
-				out[i] = ptr[i] ^ *((char*)(&key_) + i % 4 );
+				uint8_t* keyPart = (uint8_t*)(&key_) + i % 4;
+				uint8_t value = *keyPart;
+				out[i] = ptr[i] ^ *keyPart;
 			}
 
 			return data_len_;
@@ -63,6 +65,8 @@ namespace ws
 	{
 		enum { BUFFER_SIZE = 65536 };
 		char wrapBuffer[BUFFER_SIZE];
+
+		uint32_t usedMaskingKey_ = 0;
 	public:
 
 		Client(DataReadyCallback_t cb, DataWrapCallback_t wrapCb) : IWebSocket(cb, wrapCb)
@@ -90,7 +94,7 @@ namespace ws
 			if (datalen < 126) // max payload len for 2 ^ 7 - 2
 			{
 				wrapBuffer[1] |= datalen; // set PAYLOAD LEN
-				resultWrapDataLen += 2;
+				resultWrapDataLen += 1;
 			}
 			else if (datalen < 65536) // max payload len for 2 ^ 16
 			{
@@ -104,17 +108,22 @@ namespace ws
 			}
 
 			uint32_t* maskingKey = (uint32_t*)(wrapBuffer + resultWrapDataLen);
-			uint32_t someRandomMaskingKey = 0xff; // random 32-bit MASKING KEY, need to be generated randomly
-			*maskingKey = someRandomMaskingKey;
+			usedMaskingKey_ = 0xff; // random 32-bit MASKING KEY, need to be generated randomly
+			*maskingKey = usedMaskingKey_;
 
 			resultWrapDataLen += 4;
 
 			// MASKING data
-			unsigned key = 0xff; // TODO, a key should be randomly generated
-			DataMaskingHelper((const uint8_t*)data, datalen, someRandomMaskingKey).Mask((uint8_t*)(wrapBuffer + resultWrapDataLen));
+			DataMaskingHelper((const uint8_t*)data, datalen, usedMaskingKey_).Mask((uint8_t*)(wrapBuffer + resultWrapDataLen));
+			//memcpy(wrapBuffer + resultWrapDataLen, data, datalen);
 			resultWrapDataLen += datalen;
 
 			wrapCb_(wrapBuffer, resultWrapDataLen);
+		}
+
+		uint32_t usedMaskingKey() const
+		{
+			return usedMaskingKey_;
 		}
 	};
 
@@ -125,6 +134,7 @@ namespace ws
 		size_t bufferLen = 0;
 
 		uint64_t inPayloadLen = 0;
+		uint32_t maskingKey_ = 0;
 
 	public:
 		Server(DataReadyCallback_t cb, DataWrapCallback_t wrapCb) : IWebSocket(cb, wrapCb) {}
@@ -141,28 +151,28 @@ namespace ws
 			if (std::bitset<8>(data[1]).test(7) != 1)
 				throw std::runtime_error("Client frame always should be masked!");
 
-			size_t headerPointer = 0;
+			size_t headerPointer = 1;
 
 			inPayloadLen = std::bitset<7>(*(data + 1)).to_ulong();
 			if (inPayloadLen < 126)
 			{
-				headerPointer = 2;
+				headerPointer += 1;
 			}
 			else if (inPayloadLen == 126)
 			{
 				inPayloadLen = *(uint16_t*)(data + 2);
-				headerPointer = 4;
+				headerPointer += 3;
 			}
 			else
 			{
 				throw std::runtime_error("Payload scheme 7 + 16 + 64 is not supported yet!");
 			}
 
-			uint32_t maskingKey = 0;
-			maskingKey = *(uint32_t*)(data + headerPointer);
+			maskingKey_ = 0;
+			maskingKey_ = *(uint32_t*)(data + headerPointer);
 			headerPointer += 4;
 
-			bufferLen = DataDemaskingHelper((const uint8_t*)(data + headerPointer), inPayloadLen, maskingKey).Demask((uint8_t*)dataBuffer_);
+			bufferLen = DataDemaskingHelper((const uint8_t*)(data + headerPointer), inPayloadLen, maskingKey_).Demask((uint8_t*)dataBuffer_);
 
 			cb_(dataBuffer_, bufferLen);
 		}
@@ -174,6 +184,11 @@ namespace ws
 		uint64_t recPayloadLen() const
 		{
 			return inPayloadLen;
+		}
+
+		uint32_t recMaskingKey() const // used for tests, just save and return the last received masking key
+		{
+			return maskingKey_;
 		}
 	};
 }

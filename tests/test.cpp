@@ -13,7 +13,7 @@ BOOST_AUTO_TEST_CASE(DataMaskingHelper_test0)
     int key = 0xaabbccdd;
     auto resLen = ws::DataMaskingHelper((uint8_t*)data, DATA_LEN, key).Mask((uint8_t*)outBuffer);
 
-    const char maskedData[] = { 0x89, 0xa9, 0xc8, 0xde, 0xDD }; // manually masked data for test :)
+    const char maskedData[] = { (const char)0x89, (const char)0xa9, (const char)0xc8, (const char)0xde, (const char)0xDD }; // manually masked data for test :)
 
     BOOST_CHECK(resLen == DATA_LEN); // masking should not affect the original size
 
@@ -111,7 +111,7 @@ BOOST_AUTO_TEST_CASE(Client_test1)
 
 BOOST_AUTO_TEST_CASE(Server_test0)
 {
-    const char wrappedData[] = { 0x82, 0x8e, 0xff, 0x00, 0x00, 0x00, 0xb7, 0x65, 0x6c, 0x6c, 0x90, 0x2c, 0x20, 0x57, 0x90, 0x72, 0x6c, 0x64, 0xde, 0x00 };
+    const char wrappedData[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
 
     char plainDataBuffer[255];

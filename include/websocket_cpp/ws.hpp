@@ -66,8 +66,13 @@ namespace ws
 	{
 		enum { BUFFER_SIZE = 65536 };
 		char wrapBuffer_[BUFFER_SIZE];
+		char payloadBuffer_[BUFFER_SIZE];
 
 		uint32_t usedMaskingKey_ = 0;
+
+		boost::asio::streambuf innerBuffer_;
+		size_t payloadLen_ = 0;
+
 	public:
 
 		Client(DataReadyCallback_t cb, DataWrapCallback_t wrapCb) : IWebSocket(cb, wrapCb)
@@ -77,6 +82,49 @@ namespace ws
 		// Inherited via IWebSocket
 		virtual void SubmitChunk(const char* data, size_t dataLen) override
 		{
+			auto bufs = innerBuffer_.prepare(dataLen);
+			memcpy(bufs.data(), data, dataLen);
+			innerBuffer_.commit(dataLen);
+
+			if (innerBuffer_.size() < 2) // not enough data received
+				return;
+
+			const uint8_t* wsHeaderPtr = (const uint8_t*)innerBuffer_.data().data();
+
+			if (std::bitset<8>(wsHeaderPtr[0]).test(7) == false)
+				throw std::runtime_error("FIN != 0 not supported yet!");
+			
+			if (std::bitset<4>(wsHeaderPtr[0]) != 2)
+				throw std::runtime_error("Opcodes except 2 is not supported yet!");
+
+			if (std::bitset<8>(wsHeaderPtr[1]).test(7) != 0)
+				throw std::runtime_error("Server's frame should not be masked!");
+
+			size_t headerPtrOffset = 1;
+
+			payloadLen_ = std::bitset<7>(*(wsHeaderPtr + 1)).to_ulong();
+			if (payloadLen_ < 126)
+			{
+				headerPtrOffset += 1;
+			}
+			else if (payloadLen_ == 126)
+			{
+				payloadLen_ = *(uint16_t*)(wsHeaderPtr + 2);
+				headerPtrOffset += 3;
+			}
+			else
+			{
+				throw std::runtime_error("Payload scheme 7 + 16 + 64 is not supported yet!");
+			}
+
+			if (innerBuffer_.size() < headerPtrOffset +  payloadLen_) // not enough data received to read @maskingKey_ and payload
+				return;
+
+			memcpy(payloadBuffer_, wsHeaderPtr + headerPtrOffset, payloadLen_);
+
+			innerBuffer_.consume(headerPtrOffset + payloadLen_);
+
+			cb_(payloadBuffer_, payloadLen_);
 		}
 
 		virtual void WrapData(const char* data, size_t datalen) override
@@ -95,13 +143,13 @@ namespace ws
 
 			if (datalen < 126) // max payload len for 2 ^ 7 - 2
 			{
-				wrapBuffer_[1] |= datalen; // set PAYLOAD LEN
+				wrapBuffer_[1] |= datalen; // set PAYLOAD LEN6
 				resultWrapDataLen += 1;
 			}
 			else if (datalen < 65536) // max payload len for 2 ^ 16
 			{
 				wrapBuffer_[1] |= 126;
-				*(uint16_t*)(wrapBuffer_ + 2) = datalen; // next 2 bytes reserved for the payload size 
+				*(uint16_t*)(wrapBuffer_ + 2) = (uint16_t)datalen; // next 2 bytes reserved for the payload size 
 				resultWrapDataLen += 3;
 			}
 			else
@@ -125,6 +173,11 @@ namespace ws
 		uint32_t usedMaskingKey() const
 		{
 			return usedMaskingKey_;
+		}
+
+		size_t recPayloadLen() const
+		{
+			return payloadLen_;
 		}
 	};
 
@@ -215,7 +268,7 @@ namespace ws
 			else if (datalen < 65536) // max payload len for 2 ^ 16
 			{
 				wrapBuffer_[1] |= 126;
-				*(uint16_t*)(wrapBuffer_ + 2) = datalen; // next 2 bytes reserved for the payload size 
+				*(uint16_t*)(wrapBuffer_ + 2) = (uint16_t)datalen; // next 2 bytes reserved for the payload size 
 				resultWrapDataLen += 3;
 			}
 			else

@@ -53,11 +53,11 @@ BOOST_AUTO_TEST_CASE(Client_test0)
 		wrapDataLen = len;
     };
     
-    ws::Client c(dataReadyCb, wrapCb);
+    auto c = new ws::Client(dataReadyCb, wrapCb);
 
     char plainText[] = "Hello, World!"; // it's a short text, for the payload length should be sufficient 7bit scheme
     const size_t PLAIN_TEXT_LEN = strlen(plainText) + 1; // +1 for trailing 0
-    c.WrapData(plainText, PLAIN_TEXT_LEN);
+    c->WrapData(plainText, PLAIN_TEXT_LEN);
 
     BOOST_CHECK(wrapDataLen == 20);
 
@@ -69,7 +69,9 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     
     BOOST_CHECK(std::bitset<7>(wrapDataBuffer[1]) == PLAIN_TEXT_LEN); // check payload len
     
-    BOOST_CHECK(*((uint32_t*)(wrapDataBuffer + 2)) == c.usedMaskingKey()); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(*((uint32_t*)(wrapDataBuffer + 2)) == c->usedMaskingKey()); // just check some MASKING KEY is set, should be 32 bit value
+    
+    delete c;
 }
 
 BOOST_AUTO_TEST_CASE(Client_test1)
@@ -124,9 +126,9 @@ BOOST_AUTO_TEST_CASE(Server_dewrap_test0)
     BOOST_CHECK(s.recMaskingKey() == 0xff);
 
     BOOST_CHECK(s.recPayloadLen() == 14); // Hello, World! + trailing zero = 14
-    BOOST_CHECK(plainDataLen == 14); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(plainDataLen == 14);
 
-    BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0); // just check some MASKING KEY is set, should be 32 bit value
+    BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0);
 }
 
 BOOST_AUTO_TEST_CASE(Server_dewrap_test1)
@@ -175,11 +177,11 @@ BOOST_AUTO_TEST_CASE(Server_wrap_test0)
         wrapDataLen = len;
     };
 
-    ws::Server s(dataReadyCb, wrapCb);
+    auto* s = new ws::Server(dataReadyCb, wrapCb);
 
     char plainText[] = "Some test text!"; // it's a short text, for the payload length should be sufficient 7bit scheme
     const size_t PLAIN_TEXT_LEN = strlen(plainText) + 1; // +1 for trailing 0
-    s.WrapData(plainText, PLAIN_TEXT_LEN);
+    s->WrapData(plainText, PLAIN_TEXT_LEN);
 
     BOOST_TEST(wrapDataLen == 18);
 
@@ -192,4 +194,29 @@ BOOST_AUTO_TEST_CASE(Server_wrap_test0)
     BOOST_TEST(std::bitset<7>(wrapDataBuffer[1]) == PLAIN_TEXT_LEN); // check payload len
 
     BOOST_TEST(strcmp(wrapDataBuffer + 2, "Some test text!") == 0);
+
+    delete s;
+}
+
+BOOST_AUTO_TEST_CASE(Client_dewrap_test0)
+{
+    const char TEST_WRAPPED_DATA[] = { (char)0x82, (char)0x05, (char)0x54, (char)0x65, (char)0x73, (char)0x74, (char)0x00 };
+    const size_t WRAPPED_DATA_LEN = 7;
+
+    char plainDataBuffer[255];
+    memset(plainDataBuffer, 0, 255);
+    size_t plainDataLen = 0;
+
+    auto dataReadyCb = [&plainDataBuffer, &plainDataLen](const char* data, size_t len) { memcpy(plainDataBuffer, data, len), plainDataLen = len; };
+    auto wrapCb = [](const char* data, size_t len) {};
+
+    auto c = new ws::Client(dataReadyCb, wrapCb);
+
+    c->SubmitChunk(TEST_WRAPPED_DATA, WRAPPED_DATA_LEN);
+    
+    BOOST_TEST(c->recPayloadLen() == 5); // 4 chars + trailing zero = 5 
+    BOOST_CHECK(plainDataLen == 5);
+    BOOST_CHECK(strncmp(plainDataBuffer, "Test", plainDataLen) == 0);
+
+    delete c;
 }

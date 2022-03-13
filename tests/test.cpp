@@ -43,13 +43,11 @@ BOOST_AUTO_TEST_CASE(Client_test0)
 {
     const size_t DATA_BUFFER_LEN = 2048;
     char wrapDataBuffer[DATA_BUFFER_LEN];
-    char plainDataBuffer[DATA_BUFFER_LEN];
 
     memset(wrapDataBuffer, 0, DATA_BUFFER_LEN);
-    memset(plainDataBuffer, 0, DATA_BUFFER_LEN);
     size_t wrapDataLen = 0;
 
-    auto dataReadyCb = [plainDataBuffer](const char* data, size_t len) {};
+    auto dataReadyCb = [](const char* data, size_t len) {};
     auto wrapCb = [&wrapDataBuffer, &wrapDataLen](const char* wrappedData, size_t len) {
         memcpy(wrapDataBuffer, wrappedData, len);
 		wrapDataLen = len;
@@ -78,13 +76,11 @@ BOOST_AUTO_TEST_CASE(Client_test1)
 {
     const size_t DATA_BUFFER_LEN = 65536;
     char wrapDataBuffer[DATA_BUFFER_LEN];
-    char plainDataBuffer[DATA_BUFFER_LEN];
 
     memset(wrapDataBuffer, 0, DATA_BUFFER_LEN);
-    memset(plainDataBuffer, 0, DATA_BUFFER_LEN);
     size_t wrapDataLen = 0;
 
-    auto dataReadyCb = [plainDataBuffer](const char* data, size_t len) {};
+    auto dataReadyCb = [](const char* data, size_t len) {};
     auto wrapCb = [&wrapDataBuffer, &wrapDataLen](const char* wrappedData, size_t len) {
         memcpy(wrapDataBuffer, wrappedData, len);
         wrapDataLen = len;
@@ -109,7 +105,7 @@ BOOST_AUTO_TEST_CASE(Client_test1)
     BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 4) != 0); // just check some MASKING KEY is set, should be 32 bit value
 }
 
-BOOST_AUTO_TEST_CASE(Server_test0)
+BOOST_AUTO_TEST_CASE(Server_dewrap_test0)
 {
     const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
@@ -133,7 +129,7 @@ BOOST_AUTO_TEST_CASE(Server_test0)
     BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0); // just check some MASKING KEY is set, should be 32 bit value
 }
 
-BOOST_AUTO_TEST_CASE(Server_test1)
+BOOST_AUTO_TEST_CASE(Server_dewrap_test1)
 {
     const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
@@ -163,4 +159,37 @@ BOOST_AUTO_TEST_CASE(Server_test1)
 
     // finally, when it received all data, it should process it correctly
     BOOST_CHECK(strcmp(outPayloadBuffer, "Hello, World!") == 0);
+}
+
+BOOST_AUTO_TEST_CASE(Server_wrap_test0)
+{
+    const size_t DATA_BUFFER_LEN = 2048;
+    char wrapDataBuffer[DATA_BUFFER_LEN];
+
+    memset(wrapDataBuffer, 0, DATA_BUFFER_LEN);
+    size_t wrapDataLen = 0;
+
+    auto dataReadyCb = [](const char* data, size_t len) {};
+    auto wrapCb = [&wrapDataBuffer, &wrapDataLen](const char* wrappedData, size_t len) {
+        memcpy(wrapDataBuffer, wrappedData, len);
+        wrapDataLen = len;
+    };
+
+    ws::Server s(dataReadyCb, wrapCb);
+
+    char plainText[] = "Some test text!"; // it's a short text, for the payload length should be sufficient 7bit scheme
+    const size_t PLAIN_TEXT_LEN = strlen(plainText) + 1; // +1 for trailing 0
+    s.WrapData(plainText, PLAIN_TEXT_LEN);
+
+    BOOST_TEST(wrapDataLen == 18);
+
+    BOOST_TEST(std::bitset<8>(wrapDataBuffer[0]).test(7) == 1); // check FIN bit is 1
+
+    BOOST_TEST(std::bitset<4>(wrapDataBuffer[0]) == 0x2); // check OP code, we use only binary
+
+    BOOST_TEST(std::bitset<8>(wrapDataBuffer[1]).test(7) == 0); // check MASK code, for server it should be false
+
+    BOOST_TEST(std::bitset<7>(wrapDataBuffer[1]) == PLAIN_TEXT_LEN); // check payload len
+
+    BOOST_TEST(strcmp(wrapDataBuffer + 2, "Some test text!") == 0);
 }

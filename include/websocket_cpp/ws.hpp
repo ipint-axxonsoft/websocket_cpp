@@ -65,14 +65,13 @@ namespace ws
 	class Client : public IWebSocket
 	{
 		enum { BUFFER_SIZE = 65536 };
-		char wrapBuffer[BUFFER_SIZE];
+		char wrapBuffer_[BUFFER_SIZE];
 
 		uint32_t usedMaskingKey_ = 0;
 	public:
 
 		Client(DataReadyCallback_t cb, DataWrapCallback_t wrapCb) : IWebSocket(cb, wrapCb)
 		{
-			memset(wrapBuffer, 0, BUFFER_SIZE);
 		}
 
 		// Inherited via IWebSocket
@@ -84,23 +83,25 @@ namespace ws
 		{
 			size_t resultWrapDataLen = 0;
 
-			wrapBuffer[0] |= 1U << 7; // set FIN bit
+			memset(wrapBuffer_, 0, BUFFER_SIZE);
+
+			wrapBuffer_[0] |= 1U << 7; // set FIN bit
 			
-			wrapBuffer[0] |= 0x2; // set OP CODE. 0x2 is binary format
+			wrapBuffer_[0] |= 0x2; // set OP CODE. 0x2 is binary format
 			
-			wrapBuffer[1] |= 1U << 7; // set MASK flag
+			wrapBuffer_[1] |= 1U << 7; // set MASK flag
 
 			resultWrapDataLen += 1;
 
 			if (datalen < 126) // max payload len for 2 ^ 7 - 2
 			{
-				wrapBuffer[1] |= datalen; // set PAYLOAD LEN
+				wrapBuffer_[1] |= datalen; // set PAYLOAD LEN
 				resultWrapDataLen += 1;
 			}
 			else if (datalen < 65536) // max payload len for 2 ^ 16
 			{
-				wrapBuffer[1] |= 126;
-				*(uint16_t*)(wrapBuffer + 2) |= datalen; // next 2 bytes reserved for the payload size 
+				wrapBuffer_[1] |= 126;
+				*(uint16_t*)(wrapBuffer_ + 2) = datalen; // next 2 bytes reserved for the payload size 
 				resultWrapDataLen += 3;
 			}
 			else
@@ -108,18 +109,17 @@ namespace ws
 				throw std::runtime_error("Not implemented yet 7+16+64 payload length scheme");
 			}
 
-			uint32_t* maskingKey = (uint32_t*)(wrapBuffer + resultWrapDataLen);
+			uint32_t* maskingKey = (uint32_t*)(wrapBuffer_ + resultWrapDataLen);
 			usedMaskingKey_ = 0xff; // random 32-bit MASKING KEY, need to be generated randomly
 			*maskingKey = usedMaskingKey_;
 
 			resultWrapDataLen += 4;
 
 			// MASKING data
-			DataMaskingHelper((const uint8_t*)data, datalen, usedMaskingKey_).Mask((uint8_t*)(wrapBuffer + resultWrapDataLen));
-			//memcpy(wrapBuffer + resultWrapDataLen, data, datalen);
+			DataMaskingHelper((const uint8_t*)data, datalen, usedMaskingKey_).Mask((uint8_t*)(wrapBuffer_ + resultWrapDataLen));
 			resultWrapDataLen += datalen;
 
-			wrapCb_(wrapBuffer, resultWrapDataLen);
+			wrapCb_(wrapBuffer_, resultWrapDataLen);
 		}
 
 		uint32_t usedMaskingKey() const
@@ -134,6 +134,8 @@ namespace ws
 
 		enum { BUFFER_SIZE = 65536 };
 		char payloadBuffer_[BUFFER_SIZE];
+
+		char wrapBuffer_[BUFFER_SIZE];
 
 		uint64_t payloadLen_ = 0;
 		uint32_t maskingKey_ = 0;
@@ -195,6 +197,36 @@ namespace ws
 
 		virtual void WrapData(const char* data, size_t datalen) override
 		{
+			size_t resultWrapDataLen = 0;
+
+			memset(wrapBuffer_, 0, BUFFER_SIZE);
+
+			wrapBuffer_[0] |= 1U << 7; // set FIN bit
+
+			wrapBuffer_[0] |= 0x2; // set OP CODE. 0x2 is binary format
+
+			resultWrapDataLen += 1;
+
+			if (datalen < 126) // max payload len for 2 ^ 7 - 2
+			{
+				wrapBuffer_[1] |= datalen; // set PAYLOAD LEN
+				resultWrapDataLen += 1;
+			}
+			else if (datalen < 65536) // max payload len for 2 ^ 16
+			{
+				wrapBuffer_[1] |= 126;
+				*(uint16_t*)(wrapBuffer_ + 2) = datalen; // next 2 bytes reserved for the payload size 
+				resultWrapDataLen += 3;
+			}
+			else
+			{
+				throw std::runtime_error("Not implemented yet 7+16+64 payload length scheme");
+			}
+
+			memcpy(wrapBuffer_ + resultWrapDataLen, data, datalen);
+			resultWrapDataLen += datalen;
+
+			wrapCb_(wrapBuffer_, resultWrapDataLen);
 		}
 
 		uint64_t recPayloadLen() const

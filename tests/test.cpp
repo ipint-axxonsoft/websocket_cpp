@@ -39,7 +39,7 @@ BOOST_AUTO_TEST_CASE(DataMaskingHelper_test1)
     BOOST_CHECK(strcmp(data, demaskedBuffer) == 0);
 }
 
-BOOST_AUTO_TEST_CASE(Client_test0)
+BOOST_AUTO_TEST_CASE(client_test0)
 {
     const size_t DATA_BUFFER_LEN = 2048;
     char wrapDataBuffer[DATA_BUFFER_LEN];
@@ -74,7 +74,7 @@ BOOST_AUTO_TEST_CASE(Client_test0)
     delete c;
 }
 
-BOOST_AUTO_TEST_CASE(Client_test1)
+BOOST_AUTO_TEST_CASE(client_test1)
 {
     const size_t DATA_BUFFER_LEN = 65536;
     char wrapDataBuffer[DATA_BUFFER_LEN];
@@ -107,7 +107,7 @@ BOOST_AUTO_TEST_CASE(Client_test1)
     BOOST_CHECK(*(uint32_t*)(wrapDataBuffer + 4) != 0); // just check some MASKING KEY is set, should be 32 bit value
 }
 
-BOOST_AUTO_TEST_CASE(Server_dewrap_test0)
+BOOST_AUTO_TEST_CASE(server_dewrap_test0)
 {
     const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
@@ -131,7 +131,7 @@ BOOST_AUTO_TEST_CASE(Server_dewrap_test0)
     BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0);
 }
 
-BOOST_AUTO_TEST_CASE(Server_dewrap_test1)
+BOOST_AUTO_TEST_CASE(server_dewrap_test1)
 {
     const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
@@ -163,7 +163,7 @@ BOOST_AUTO_TEST_CASE(Server_dewrap_test1)
     BOOST_CHECK(strcmp(outPayloadBuffer, "Hello, World!") == 0);
 }
 
-BOOST_AUTO_TEST_CASE(Server_wrap_test0)
+BOOST_AUTO_TEST_CASE(server_wrap_test0)
 {
     const size_t DATA_BUFFER_LEN = 2048;
     char wrapDataBuffer[DATA_BUFFER_LEN];
@@ -198,7 +198,7 @@ BOOST_AUTO_TEST_CASE(Server_wrap_test0)
     delete s;
 }
 
-BOOST_AUTO_TEST_CASE(Client_dewrap_test0)
+BOOST_AUTO_TEST_CASE(client_dewrap_test0)
 {
     const char TEST_WRAPPED_DATA[] = { (char)0x82, (char)0x05, (char)0x54, (char)0x65, (char)0x73, (char)0x74, (char)0x00 };
     const size_t WRAPPED_DATA_LEN = 7;
@@ -219,4 +219,55 @@ BOOST_AUTO_TEST_CASE(Client_dewrap_test0)
     BOOST_CHECK(strncmp(plainDataBuffer, "Test", plainDataLen) == 0);
 
     delete c;
+}
+
+BOOST_AUTO_TEST_CASE(client_and_server_test0)
+{
+    // *** Client side usage example *** //
+
+    const size_t BUFFER_SIZE = 2048;
+    char clientWrappedData[BUFFER_SIZE];
+    size_t clientWrappedDataLen = 0;
+    
+    const char clientMessage0[] = "Wikipedia is a free online encyclopedia, created and edited by volunteers around the world and hosted by the Wikimedia Foundation.";
+
+    ws::IWebSocket::DataReadyCallback_t clientIncomingDataReadyCb = [](const char* data, size_t dataLen) {};
+    ws::IWebSocket::DataWrapCallback_t clientWrappedDataReadyCb = [&clientWrappedData, &clientWrappedDataLen](const char* data, size_t dataLen) {
+        memcpy(clientWrappedData, data, dataLen);
+        clientWrappedDataLen = dataLen;
+    };
+    
+    auto client = new ws::Client(clientIncomingDataReadyCb, clientWrappedDataReadyCb);
+
+    const size_t CLIENT_MESSAGE0_SIZE = strlen(clientMessage0) + 1; // +1 for trailing zero
+    client->WrapData(clientMessage0, CLIENT_MESSAGE0_SIZE);
+
+    // *** Server side usage example ***//
+
+    char serverIncomingData[BUFFER_SIZE];
+    size_t serverIncomingDataLen = 0;
+    ws::IWebSocket::DataReadyCallback_t serverIncomingDataReadyCb = [&serverIncomingData, &serverIncomingDataLen](const char* data, size_t dataLen) {
+        memcpy(serverIncomingData, data, dataLen);
+        serverIncomingDataLen = dataLen;
+    };
+
+    ws::IWebSocket::DataWrapCallback_t serverWrappedDataReadyCb = [](const char* data, size_t dataLen) {};
+    auto server = new ws::Server(serverIncomingDataReadyCb, serverWrappedDataReadyCb);
+
+    server->SubmitChunk(clientWrappedData, clientWrappedDataLen);
+
+    BOOST_TEST(strncmp(serverIncomingData, clientMessage0, serverIncomingDataLen) == 0);
+
+
+    /// *** Send another message from client side *** ///
+    const char clientMessage1[] = "The International Olympic Committee is a non-governmental sports organisation based in Lausanne, Switzerland.";
+    const size_t CLIENT_MESSAGE1_SIZE = strlen(clientMessage1) + 1; // + trailing zero
+    client->WrapData(clientMessage1, CLIENT_MESSAGE1_SIZE);
+
+    server->SubmitChunk(clientWrappedData, clientWrappedDataLen);
+
+    BOOST_TEST(strncmp(serverIncomingData, clientMessage1, serverIncomingDataLen) == 0);
+
+    delete client;
+    delete server;
 }

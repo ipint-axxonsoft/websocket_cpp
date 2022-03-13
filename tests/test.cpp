@@ -111,7 +111,7 @@ BOOST_AUTO_TEST_CASE(Client_test1)
 
 BOOST_AUTO_TEST_CASE(Server_test0)
 {
-    const char wrappedData[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
+    const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
     const size_t WRAPPED_DATA_LEN = 20;
 
     char plainDataBuffer[255];
@@ -123,7 +123,7 @@ BOOST_AUTO_TEST_CASE(Server_test0)
 
     ws::Server s(dataReadyCb, wrapCb);
 
-    s.SubmitChunk(wrappedData, WRAPPED_DATA_LEN);
+    s.SubmitChunk(TEST_WRAPPED_DATA, WRAPPED_DATA_LEN);
     
     BOOST_CHECK(s.recMaskingKey() == 0xff);
 
@@ -131,4 +131,36 @@ BOOST_AUTO_TEST_CASE(Server_test0)
     BOOST_CHECK(plainDataLen == 14); // just check some MASKING KEY is set, should be 32 bit value
 
     BOOST_CHECK(strcmp(plainDataBuffer, "Hello, World!") == 0); // just check some MASKING KEY is set, should be 32 bit value
+}
+
+BOOST_AUTO_TEST_CASE(Server_test1)
+{
+    const char TEST_WRAPPED_DATA[] = { (const char)0x82, (const char)0x8e, (const char)0xff, (const char)0x00, (const char)0x00, (const char)0x00, (const char)0xb7, (const char)0x65, (const char)0x6c, (const char)0x6c, (const char)0x90, (const char)0x2c, (const char)0x20, (const char)0x57, (const char)0x90, (const char)0x72, (const char)0x6c, (const char)0x64, (const char)0xde, (const char)0x00 };
+    const size_t WRAPPED_DATA_LEN = 20;
+
+    char outPayloadBuffer[255];
+    memset(outPayloadBuffer, 0, 255);
+    size_t payloadLen = 0;
+
+    auto dataReadyCb = [&outPayloadBuffer, &payloadLen](const char* data, size_t len) { memcpy(outPayloadBuffer, data, len), payloadLen = len; };
+    auto wrapCb = [](const char* data, size_t len) {};
+
+    ws::Server s(dataReadyCb, wrapCb);
+
+    // here we test whether Server process correctly incoming data, if we submit data by pieces, i.e. emulate data transmission over a real network
+    s.SubmitChunk(TEST_WRAPPED_DATA, 1);
+    //// as we not sumbit enough data, check that server 
+    BOOST_TEST(payloadLen == 0);
+    s.SubmitChunk(TEST_WRAPPED_DATA + 1, 1); // not enough yet
+    BOOST_TEST(payloadLen == 0);
+    s.SubmitChunk(TEST_WRAPPED_DATA + 2, 4); // not enough yet
+    BOOST_TEST(payloadLen == 0);
+    s.SubmitChunk(TEST_WRAPPED_DATA + 6, 4); // not enough yet
+    BOOST_TEST(payloadLen == 0);
+    s.SubmitChunk(TEST_WRAPPED_DATA + 10, 10);
+    // now we submit all data, check Server process all data and called our @dataReadyCb
+    BOOST_TEST(payloadLen == 14); //paydloadLen should "Hello, World!" + trailing \0
+
+    // finally, when it received all data, it should process it correctly
+    BOOST_CHECK(strcmp(outPayloadBuffer, "Hello, World!") == 0);
 }

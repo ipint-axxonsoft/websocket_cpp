@@ -1,6 +1,9 @@
 #pragma once
 
+#include <boost/asio/streambuf.hpp>
+
 #include <functional>
+#include <bitset>
 
 namespace ws
 {
@@ -19,9 +22,7 @@ namespace ws
 			auto* ptr = data_;
 			for (size_t i = 0; i < data_len_; ++i)
 			{
-				uint8_t* keyPart = (uint8_t*)(&key_) + i % 4;
-				uint8_t value = *keyPart;
-				out[i] = ptr[i] ^ *keyPart;
+				out[i] = ptr[i] ^ *((uint8_t*)(&key_) + i % 4); // mask data as said in RFC6455 5.3. Client-to-Server Masking
 			}
 
 			return data_len_;
@@ -129,11 +130,12 @@ namespace ws
 
 	class Server : public IWebSocket
 	{
-		enum { BUFFER_SIZE = 65536 };
-		char dataBuffer_[BUFFER_SIZE];
-		size_t bufferLen = 0;
+		boost::asio::streambuf innerBuffer_;
 
-		uint64_t inPayloadLen = 0;
+		enum { BUFFER_SIZE = 65536 };
+		char payloadBuffer_[BUFFER_SIZE];
+
+		uint64_t payloadLen_ = 0;
 		uint32_t maskingKey_ = 0;
 
 	public:
@@ -142,39 +144,53 @@ namespace ws
 		// Inherited via IWebSocket
 		virtual void SubmitChunk(const char* data, size_t dataLen) override
 		{
-			if (std::bitset<8>(data[0]).test(7) == false)
+			auto bufs = innerBuffer_.prepare(dataLen);
+			memcpy(bufs.data(), data, dataLen);
+			innerBuffer_.commit(dataLen);
+
+			if (innerBuffer_.size() < 2) // not enough data received
+				return;
+
+			const uint8_t* wsHeaderPtr = (const uint8_t*)innerBuffer_.data().data();
+
+			if (std::bitset<8>(wsHeaderPtr[0]).test(7) == false)
 				throw std::runtime_error("FIN != 0 not supported yet!");
 			
-			if (std::bitset<4>(data[0]) != 2)
+			if (std::bitset<4>(wsHeaderPtr[0]) != 2)
 				throw std::runtime_error("Opcodes except 2 is not supported yet!");
 
-			if (std::bitset<8>(data[1]).test(7) != 1)
+			if (std::bitset<8>(wsHeaderPtr[1]).test(7) != 1)
 				throw std::runtime_error("Client frame always should be masked!");
 
-			size_t headerPointer = 1;
+			size_t headerPtrOffset = 1;
 
-			inPayloadLen = std::bitset<7>(*(data + 1)).to_ulong();
-			if (inPayloadLen < 126)
+			payloadLen_ = std::bitset<7>(*(wsHeaderPtr + 1)).to_ulong();
+			if (payloadLen_ < 126)
 			{
-				headerPointer += 1;
+				headerPtrOffset += 1;
 			}
-			else if (inPayloadLen == 126)
+			else if (payloadLen_ == 126)
 			{
-				inPayloadLen = *(uint16_t*)(data + 2);
-				headerPointer += 3;
+				payloadLen_ = *(uint16_t*)(wsHeaderPtr + 2);
+				headerPtrOffset += 3;
 			}
 			else
 			{
 				throw std::runtime_error("Payload scheme 7 + 16 + 64 is not supported yet!");
 			}
 
+			if (innerBuffer_.size() < headerPtrOffset + 4 + payloadLen_) // not enough data received to read @maskingKey_ and payload
+				return;
+
 			maskingKey_ = 0;
-			maskingKey_ = *(uint32_t*)(data + headerPointer);
-			headerPointer += 4;
+			maskingKey_ = *(uint32_t*)(wsHeaderPtr + headerPtrOffset);
+			headerPtrOffset += 4;
 
-			bufferLen = DataDemaskingHelper((const uint8_t*)(data + headerPointer), inPayloadLen, maskingKey_).Demask((uint8_t*)dataBuffer_);
+			auto len = DataDemaskingHelper((const uint8_t*)(wsHeaderPtr + headerPtrOffset), payloadLen_, maskingKey_).Demask((uint8_t*)payloadBuffer_);
+			
+			innerBuffer_.consume(headerPtrOffset + payloadLen_);
 
-			cb_(dataBuffer_, bufferLen);
+			cb_(payloadBuffer_, len);
 		}
 
 		virtual void WrapData(const char* data, size_t datalen) override
@@ -183,7 +199,7 @@ namespace ws
 
 		uint64_t recPayloadLen() const
 		{
-			return inPayloadLen;
+			return payloadLen_;
 		}
 
 		uint32_t recMaskingKey() const // used for tests, just save and return the last received masking key
